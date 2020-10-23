@@ -4,7 +4,7 @@
  * @author: rory
  * @Date: 2020-10-16 16:09:16
  * @LastEditors: rory
- * @LastEditTime: 2020-10-16 16:42:41
+ * @LastEditTime: 2020-10-22 11:41:28
  */
 import { Sprite } from 'pixi.js';
 
@@ -15,6 +15,7 @@ interface hasIndexXSpriteType extends Sprite{
     IndexY?:number;
     canMove?:boolean;
     isActive?:boolean;
+    Id?:number;
 }
 
 export{
