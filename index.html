@@ -1,11 +1,577 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Document</title>
-    <script src="./src/index.ts"></script>
+    <title>test</title>
+    <style>
+        .stage {
+            position: relative;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+
+        @keyframes fadeOut {
+            100% {
+                opacity: 0;
+                transform: scale(1.8);
+            }
+        }
+
+        @keyframes fadeIn {
+            0% {
+                transform: translateY(-2000px);
+            }
+        }
+
+        .piece {
+            cursor: pointer;
+            width: 45px;
+            height: 45px;
+            /* padding: 15px; */
+            color: white;
+            position: absolute;
+            transition: all 0.3s ease-in-out;
+            border-radius: 6px;
+            animation: fadeIn 0.3s forwards;
+            border: 3px solid white;
+            opacity: 0.8;
+        }
+
+        .active {
+            opacity: 0.85;
+            border: 3px solid black;
+            box-shadow: 0px 0px 6px black;
+        }
+
+        .highlight {
+            opacity: 1;
+        }
+
+        .hide {
+            animation: fadeOut 0.3s forwards;
+        }
+
+        .utils {
+            position: fixed;
+            right: 10px;
+        }
+
+
+        #main {
+            margin: 0 auto;
+            border: 1px solid black;
+            width: auto;
+        }
+
+        .game-bootstrap {
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .game-bootstrap button {
+            margin: 10px 0px;
+            display: block;
+        }
+
+        .game-container {
+            display: none;
+        }
+
+        .game-console {
+            padding: 10px 20px;
+        }
+    </style>
 </head>
+
 <body>
+    <div id="main">
+        <div class="game-bootstrap">
+            <p>消消乐</p>
+            <br />
+            <button onclick="start()">开始游戏</button>
+        </div>
+
+        <div class="game-container">
+            <div class="game-console">
+                <span>
+                    当前分数
+                    <span id="coin">0</span>
+                </span>
+            </div>
+            <div class="stage">
+            </div>
+            <audio hidden id="game-audio"></audio>
+            <audio hidden loop id="game-audio-bg" src="./assets/bg.mp3"></audio>
+        </div>
+    </div>
+
 </body>
+<script>
+    const $ = (name) => document.querySelector(name)
+    const GRID_SIZE = 55
+    class Utils {
+        colorList = ['#87481f', '#102b6a', '#f15b6c', '#f26522', '#375830', /* '#53261f', '#6a3427', '#145b7d'  */ ]
+        constructor() {}
+        randomColor() {
+            let i = Math.round(Math.random() * this.colorList.length - 1)
+            i < 0 && (i = 0)
+            i > this.colorList.length && (i = this.colorList.length)
+            return this.colorList[i]
+        }
+        createMap(row = 5, col = 5) {
+            let id = 0
+            const map = []
+            for (let index = 0; index < row; index++) {
+                map.push([])
+            }
+            map.forEach((item, index) => {
+                for (let i = 0; i < col; i++) {
+
+                    item.push({
+                        color: this.randomColor(),
+                        id: id++,
+                        index: i,
+                        state: true, // 为false时表示需要清除
+                        x: GRID_SIZE * i,
+                        y: index % col * GRID_SIZE,
+                        position: [i, index],
+                    })
+                }
+            })
+            return map
+        }
+        // 数组以某个属性去重 
+        unique(arr, val) {
+            const res = new Map();
+            return arr.filter(item => !res.has(item[val]) && res.set(item[val], 1))
+        }
+
+        // 数组旋转九十度 左下至右上 👨‍🏭
+        rotateArray(arr) {
+            arr = JSON.parse(JSON.stringify(arr))
+            const rotateArray = []
+            for (let index = 0; index < arr.length; index++) {
+                const element = arr[index]
+                const rowList = []
+                for (let i = 0; i < arr.length; i++) {
+                    arr[i][index] && rowList.push(arr[i][index])
+                }
+                rowList.length !== 0 && rotateArray.push(rowList)
+            }
+            return rotateArray
+        }
+
+    }
+
+    class MoveEvent {
+        active = [] // 选中的
+        highlightList = new Map() // 已选中的格子周边可替换的格子
+        utils = new Utils()
+        audio = new GameAudio()
+        constructor() {}
+        clearStyle() {
+            try {
+                this.active.forEach(item => item.classList.remove('active'))
+                this.active = []
+                Object.keys(this.highlightList).forEach(item => {
+                    this.highlightList[item].dom && this.highlightList[item].dom.classList.remove(
+                        'highlight')
+                })
+                this.highlightList = new Map({
+                    left: null,
+                    right: null,
+                    top: null,
+                    bottom: null,
+                })
+            } catch (err) {}
+        }
+        register(container = document.createElement('div')) {
+            container.addEventListener('click', (ev) => {
+                const target = ev.target
+                const id = Number(target.getAttribute('data-id'))
+                if (!app.canClick) return
+                // 点的不是方块
+                if (!new Set(target.classList).has('piece'))
+                    return
+                if (this.active.length !== 0) {
+                    // 点击已经被选中的
+                    if (id === this.active[0].id)
+                        return
+                    // 点击周边可点的
+                    const idList = new Set(Object.keys(this.highlightList).map(item => this.highlightList[
+                        item].id))
+                    if (idList.has(id)) {
+                        this.audio.move()
+                        this.move(target, id)
+                    } else {
+                        this.handleClickGrid(target)
+                    }
+                    return
+                }
+                this.handleClickGrid(target)
+            })
+        }
+        handleClickGrid(target) {
+            this.audio.click()
+            this.clearStyle()
+            this.active.forEach(item => item.classList.remove('active'))
+            this.active.push(target)
+            target.classList.add('active')
+            let [x, y] = target.getAttribute('data-position').split(',')
+            x = Number(x)
+            y = Number(y)
+
+            this.highlightList.left = app.map[y][x - 1]
+            this.highlightList.right = app.map[y][x + 1]
+            this.highlightList.top = app.map[y - 1] && app.map[y - 1][x]
+            this.highlightList.bottom = app.map[y + 1] && app.map[y + 1][x]
+            Object.keys(this.highlightList).forEach(item => {
+                if (!this.highlightList[item]) {
+                    this.highlightList[item] = {
+                        id: -1
+                    }
+                }
+            })
+
+            this.highlightList.left = Object.assign(this.highlightList.left, {
+                dom: document.querySelector(`.data-${this.highlightList.left.id}`)
+            })
+            this.highlightList.right = Object.assign(this.highlightList.right, {
+                dom: document.querySelector(`.data-${this.highlightList.right.id}`)
+            })
+            this.highlightList.top = Object.assign(this.highlightList.top, {
+                dom: document.querySelector(`.data-${this.highlightList.top.id}`)
+            })
+            this.highlightList.bottom = Object.assign(this.highlightList.bottom, {
+                dom: document.querySelector(`.data-${this.highlightList.bottom.id}`)
+            })
+
+            Object.keys(this.highlightList).forEach(item => {
+                if (!this.highlightList[item].dom) return
+                this.highlightList[item].dom.classList.add('highlight')
+            })
+        }
+        // 处理互换逻辑
+        move(target, id) {
+            // 被替换的
+            let [x, y] = target.getAttribute('data-position').split(',')
+            x = Number(x)
+            y = Number(y)
+            // 中心方块
+            let [_x, _y] = this.active[0].getAttribute('data-position').split(',')
+            Object.keys(this.highlightList).map(item => {
+                if (this.highlightList[item].id === id) {
+                    const tempMap = JSON.parse(JSON.stringify(app.map))
+                    const left = target.style.left
+                    const top = target.style.top
+
+                    const _left = this.active[0].style.left
+                    const _top = this.active[0].style.top
+
+                    this.active[0].style.left = left
+                    this.active[0].style.top = top
+
+                    target.style.left = _left
+                    target.style.top = _top
+
+                    const piece_a = JSON.parse(JSON.stringify(tempMap[y][x]))
+                    const piece_b = JSON.parse(JSON.stringify(tempMap[_y][_x]))
+
+                    tempMap[_y][_x].color = piece_a.color
+                    tempMap[_y][_x].id = piece_a.id
+                    tempMap[y][x].color = piece_b.color
+                    tempMap[y][x].id = piece_b.id
+
+                    if (app.findSamePiece(tempMap).length > 0) {
+                        app.map = tempMap
+                        setTimeout(() => {
+                            app.check(tempMap)
+                            this.clearStyle()
+                        }, 300)
+                    } else {
+                        setTimeout(() => {
+                            this.active[0].style.left = _left
+                            this.active[0].style.top = _top
+
+                            target.style.left = left
+                            target.style.top = top
+                            this.clearStyle()
+                        }, 300)
+                    }
+                }
+            })
+        }
+    }
+
+    class App {
+        row = 6
+        col = 6
+        coin = 0
+        audio = new GameAudio()
+        utils = new Utils()
+        event = new MoveEvent()
+        map = this.utils.createMap(this.row, this.col)
+        rotateMap = [] // 旋转九十度后的数组
+        container = document.createElement('div')
+        canClick = false
+        constructor() {
+            this.event.register(this.container)
+        }
+        start() {
+            this.render(this.map)
+            setTimeout(() => {
+                this.check(this.map)
+            }, 800)
+        }
+        check(map) {
+            this.map = map
+            const list = this.findSamePiece(map)
+            if (list.length > 0) {
+                this.audio.award()
+                this.clear(list)
+                this.rearrangement()
+            } else {
+                this.canClick = true
+            }
+        }
+        render(map) {
+            this.canClick = false
+            document.querySelector('.stage').innerHTML = ''
+            map.forEach((arr, arrIndex) => {
+                arr.forEach((item, index) => {
+                    const piece = document.createElement('div')
+                    piece.classList.add('piece')
+                    piece.classList.add('data-' + item.id)
+                    piece.setAttribute('data-id', item.id)
+                    piece.style.background = item.color
+                    piece.style.left = item.x + 'px'
+                    piece.style.top = item.y + 'px'
+                    // piece.innerHTML = item.id
+                    piece.setAttribute('data-position', item.position)
+                    this.container.appendChild(piece)
+                })
+            })
+            document.querySelector('.stage').append(this.container)
+            document.querySelector('.stage').style.width = this.row * GRID_SIZE + 'px'
+            document.querySelector('.stage').style.height = this.row * GRID_SIZE + 'px'
+        }
+        findSamePiece(map) {
+            const resultArr = []
+            const setState = (obj) => {
+                return Object.assign(obj, {
+                    state: false,
+                })
+            }
+
+            function findSimilar(row = [], piece) {
+                const tempArr = []
+                try {
+                    const isSame =
+                        piece.color === row[piece.index + 1].color &&
+                        piece.color === row[piece.index + 2].color
+
+                    if (isSame) {
+                        const temp = []
+                        temp.push(setState(piece))
+                        temp.push(setState(row[piece.index + 1]))
+                        temp.push(setState(row[piece.index + 2]))
+                        tempArr.push(...this.utils.unique(temp, 'id'))
+                        if (tempArr.length > 2) {
+                            resultArr.push(...tempArr)
+                        }
+                    }
+                } catch (err) {}
+            }
+            // 横向判断
+            map.forEach(row => {
+                row.forEach((piece, index) => {
+                    findSimilar.call(this, row, piece)
+                })
+            })
+            // 竖向判断
+            this.rotateMap = JSON.parse(JSON.stringify(this.utils.rotateArray(map)))
+            this.rotateMap.forEach(row => {
+                row.forEach((piece, index) => {
+                    piece.index = index
+                    findSimilar.call(this, row, piece)
+                })
+            })
+            return this.utils.unique(resultArr, 'id')
+        }
+        clear(sameList) {
+            sameList.forEach(item => {
+                const target = document.querySelector(`.data-${item.id}`)
+                target.classList.add('hide')
+                setTimeout(() => {
+                    target.remove()
+                }, 300)
+                this.coin++
+            })
+            document.querySelector('#coin').innerHTML = this.coin
+        }
+        // 重新排列
+        rearrangement() {
+            this.rotateMap.forEach(row => {
+                row.forEach((piece, index) => {
+                    for (let _index = 0; _index < row.length; _index++) {
+                        const _grid = row[_index];
+                        if (index < _index && _grid.state === false && piece.state !==
+                            false) {
+                            let afterHalfArr = row.slice(index + 1, row.length)
+                            let offset = 0
+                            afterHalfArr.forEach((g, i) => {
+                                offset += GRID_SIZE
+                                if (g.state) {
+                                    offset -= GRID_SIZE
+                                }
+                            })
+                            piece.y += offset
+                            break
+                        }
+                    }
+                })
+            })
+            const _rotateMap = this.rotateMap.flat(1)
+            this.map.forEach(row => {
+                row.forEach(piece => {
+                    _rotateMap.forEach(item => {
+                        if (item.id === piece.id) {
+                            piece.y = item.y
+                            piece.state = item.state
+
+                        }
+                    })
+                })
+            })
+            // this.updatePosition(this.rotateMap)
+            this.updatePosition(this.map)
+        }
+        // 更新格子位置
+        updatePosition(map) {
+            map.forEach((row, rowIndex) => {
+                row.forEach((piece, index) => {
+                    const target = document.querySelector(`.data-${piece.id}`)
+                    if (target) {
+                        target.style.top = piece.y + 'px'
+                        target.style.left = piece.x + 'px'
+                        target.setAttribute('data-position', [piece.position[0], piece.y /
+                            GRID_SIZE
+                        ])
+                    }
+                })
+            })
+            setTimeout(() => {
+                this.supplement()
+            }, 100)
+        }
+        // 补充新方块
+        supplement() {
+            this.rotateMap.forEach((row, rowIndex) => {
+                const hasBeenCleared = []
+                row.forEach(piece => {
+                    if (piece.state === false) {
+                        piece.color = this.utils.randomColor()
+                        hasBeenCleared.push(piece)
+                    }
+                })
+                hasBeenCleared.forEach((item, index) => {
+                    const piece = document.createElement('div')
+                    piece.classList.add('piece')
+                    piece.classList.add('data-' + item.id)
+                    piece.setAttribute('data-id', item.id)
+                    piece.style.background = item.color
+                    piece.style.left = item.x + 'px'
+                    piece.style.top = index * GRID_SIZE + 'px'
+                    piece.y = index * GRID_SIZE
+                    piece.x = item.x
+                    // piece.innerHTML = item.id
+                    piece.setAttribute('data-position', [item.position[0], index])
+                    this.container.appendChild(piece)
+                })
+
+            })
+            const result = this.rotateMap.map((row, rowIndex) => {
+                const normalList = []
+                const hasBeenClearedList = []
+                row.forEach((piece, gridIndex) => {
+                    if (piece.state === false) {
+                        hasBeenClearedList.push(piece)
+                        piece.state = true
+                    } else {
+                        normalList.push(piece)
+                    }
+                })
+                return [...hasBeenClearedList, ...normalList]
+            })
+
+
+            this.map = this.utils.rotateArray(result)
+            this.map.forEach((row, rowIndex) => {
+                row.forEach((piece, index) => {
+                    piece.index = index
+                    piece.state = true
+                    piece.x = GRID_SIZE * index
+                    piece.y = rowIndex % this.col * GRID_SIZE
+
+                })
+            })
+            this.canClick = true
+            this.rotateMap = []
+            setTimeout(() => {
+                this.check(this.map)
+            }, 300)
+        }
+
+        restart() {}
+    }
+
+    class GameAudio {
+        audio = document.querySelector('#game-audio')
+        audio_bg = document.querySelector('#game-audio-bg')
+        constructor() {}
+        start() {
+            this.bgmStart()
+        }
+        bgmStart() {
+            this.audio_bg.currentTime = 0
+            this.audio_bg.play()
+        }
+        bgmStop() {
+            this.audio_bg.currentTime = 0
+            this.audio_bg.pause()
+        }
+
+        click() {
+            this.audio.src = './assets/active.mp3'
+            this.audio.currentTime = 0
+            this.audio.play()
+        }
+        move() {
+            this.audio.src = './assets/move.mp3'
+            this.audio.currentTime = 0
+            this.audio.play()
+        }
+        award() {
+            this.audio.src = './assets/award.mp3'
+            this.audio.currentTime = 0
+            this.audio.play()
+        }
+    }
+
+    const app = new App()
+
+    function start() {
+        $('.game-bootstrap').style.display = 'none'
+        $('.game-container').style.display = 'block'
+        app.start()
+        app.audio.start()
+    }
+</script>
+
 </html>
